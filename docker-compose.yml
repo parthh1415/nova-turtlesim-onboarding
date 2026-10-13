@@ -1,0 +1,36 @@
+# two containers from the same image, on one private network, so their ROS nodes can find each other
+
+x-ros-common: &ros-common
+  image: nova-humble
+  environment:
+    # where to draw windows - XQuartz on your Mac
+    # if this doesn't connect on Colima, run: DISPLAY_HOST=host.lima.internal docker compose up -d
+    - DISPLAY=${DISPLAY_HOST:-host.docker.internal}:0
+    - QT_X11_NO_MITSHM=1
+    # both containers must share this or they ignore each other
+    - ROS_DOMAIN_ID=0
+  volumes:
+    # your code lives on your Mac and is mounted in - edit on the Mac, run in the container
+    - ./ws:/ws
+  networks:
+    - rosnet
+  # keep the bash shell alive so the container doesn't exit immediately
+  stdin_open: true
+  tty: true
+
+services:
+  # container 1: turtlesim window, spawning turtle2, mouse control
+  sim:
+    <<: *ros-common
+    container_name: sim
+    hostname: sim
+
+  # container 2: chaser node + mode flipper
+  chaser:
+    <<: *ros-common
+    container_name: chaser
+    hostname: chaser
+
+networks:
+  rosnet:
+    driver: bridge
