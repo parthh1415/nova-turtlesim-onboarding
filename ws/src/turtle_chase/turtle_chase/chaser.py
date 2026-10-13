@@ -25,13 +25,27 @@ def wrap(angle):
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
-def wall_push(pos, margin):
-    """Positive near the low wall, negative near the high wall, 0 in the middle."""
-    if pos < WORLD_MIN + margin:
-        return (WORLD_MIN + margin - pos) / margin
-    if pos > WORLD_MAX - margin:
-        return -(pos - (WORLD_MAX - margin)) / margin
-    return 0.0
+def flee_heading(mx, my, theta, lx, ly, look, margin, samples=32):
+    """Pick the direction that ends up farthest from turtle1 without hitting a wall.
+
+    Imagine taking a step of length `look` in each of `samples` directions.
+    Throw away any step that would leave the safe area near the walls.
+    Of the rest, keep the one that ends farthest from turtle1.
+    A tiny bonus for directions close to where we already face stops it
+    flip-flopping between two equally good choices.
+    """
+    best, best_score = None, -math.inf
+    for i in range(samples):
+        a = 2 * math.pi * i / samples
+        nx = mx + look * math.cos(a)
+        ny = my + look * math.sin(a)
+        if not (WORLD_MIN + margin <= nx <= WORLD_MAX - margin and
+                WORLD_MIN + margin <= ny <= WORLD_MAX - margin):
+            continue  # this step would go into a wall
+        score = math.hypot(nx - lx, ny - ly) - 0.1 * abs(wrap(a - theta))
+        if score > best_score:
+            best, best_score = a, score
+    return best  # None only if every direction hits a wall
 
 
 class Chaser(Node):
@@ -45,7 +59,8 @@ class Chaser(Node):
         self.declare_parameter('resume_flee', 3.8)       # flee: start again inside this
         self.declare_parameter('max_speed', 2.5)
         self.declare_parameter('turn_gain', 5.0)
-        self.declare_parameter('wall_margin', 1.5)
+        self.declare_parameter('wall_margin', 0.5)       # flee: stay this far from walls
+        self.declare_parameter('flee_lookahead', 1.5)    # flee: how far ahead to test each direction
 
         self.leader = None   # latest turtle1 Pose
         self.me = None       # latest turtle2 Pose
@@ -107,13 +122,13 @@ class Chaser(Node):
             heading = math.atan2(dy, dx)
             speed = min(self.p('max_speed'), 1.5 * dist)  # slow down as we close in
         else:
-            # point straight away from turtle1, plus a shove away from nearby walls
-            # so it slides along the edge instead of pinning itself in a corner
-            d = max(dist, 1e-6)
-            m = self.p('wall_margin')
-            fx = -dx / d + 2.0 * wall_push(self.me.x, m)
-            fy = -dy / d + 2.0 * wall_push(self.me.y, m)
-            heading = math.atan2(fy, fx)
+            # don't just point away from turtle1, that drives into walls and corners.
+            # test a ring of directions and take the best escape that stays on the map
+            heading = flee_heading(self.me.x, self.me.y, self.me.theta,
+                                   self.leader.x, self.leader.y,
+                                   self.p('flee_lookahead'), self.p('wall_margin'))
+            if heading is None:
+                heading = math.atan2(WORLD_MAX / 2 - self.me.y, WORLD_MAX / 2 - self.me.x)  # head for the middle
             speed = self.p('max_speed')
 
         error = wrap(heading - self.me.theta)
